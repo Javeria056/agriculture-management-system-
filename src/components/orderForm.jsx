@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 
 const initialStock = {
@@ -27,388 +26,110 @@ function OrderForm() {
     photo: "",
   });
 
-  const [buyers, setBuyers] = useState(() =>
-    readStorage("agrinovaOrders", [])
-  );
-
-  const [stock, setStock] = useState(() =>
-    readStorage("agrinovaStock", initialStock)
-  );
-
+  const [buyers, setBuyers] = useState(() => readStorage("agrinovaOrders", []));
+  const [stock, setStock] = useState(() => readStorage("agrinovaStock", initialStock));
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    localStorage.setItem("agrinovaOrders", JSON.stringify(buyers));
+  }, [buyers]);
+
+  useEffect(() => {
     localStorage.setItem("agrinovaStock", JSON.stringify(stock));
   }, [stock]);
 
-  function handleChange(event) {
-    const { name, value } = event.target;
-
-    if (name === "cnic") {
-      const digits = value.replace(/\D/g, "").slice(0, 13);
-      let formatted = digits.slice(0, 5);
-
-      if (digits.length > 5) {
-        formatted += "-" + digits.slice(5, 12);
-      }
-
-      if (digits.length > 12) {
-        formatted += "-" + digits.slice(12, 13);
-      }
-
-      setForm((previous) => ({ ...previous, cnic: formatted }));
-      return;
+  useEffect(() => {
+    const log = readStorage("agri_activity", []);
+    if (buyers.length > 0) {
+      localStorage.setItem("agri_activity", JSON.stringify(log));
     }
+  }, [buyers]);
 
-    setForm((previous) => ({ ...previous, [name]: value }));
-  }
-
-  function handlePhoto(event) {
-    const file = event.target.files[0];
-    setError("");
-    setMessage("");
-
+  const handlePhoto = (e) => {
+    const file = e.target.files[0];
     if (!file) return;
-
-    if (!["image/jpeg", "image/png"].includes(file.type)) {
-      setError("Please select a JPG or PNG image.");
-      event.target.value = "";
-      return;
-    }
-
     if (file.size > 1024 * 1024) {
-      setError("Image must be 1 MB or smaller.");
-      event.target.value = "";
+      setError("Image must be less than 1 MB");
       return;
     }
-
     const reader = new FileReader();
-
-    reader.onload = () => {
-      setForm((previous) => ({
-        ...previous,
-        photo: reader.result,
-      }));
-    };
-
+    reader.onload = () => setForm({ ...form, photo: reader.result });
     reader.readAsDataURL(file);
-  }
+  };
 
-  function handleSubmit(event) {
-    event.preventDefault();
-    setError("");
-    setMessage("");
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setError(""); setMessage("");
 
-    const name = form.name.trim();
-    const cnic = form.cnic.replace(/\D/g, "");
-    const quantity = Number(form.quantity);
+    if (form.name.length < 3) return setError("Full Name min 3 characters");
+    if (!/^\d{5}-\d{7}-\d{1}$/.test(form.cnic)) return setError("CNIC format: 12345-1234567-1");
+    if (!form.date) return setError("Delivery Date required");
+    if (Number(form.quantity) > stock[form.crop]) return setError(`Only ${stock[form.crop]} kg available for ${form.crop}`);
 
-    if (!/^[A-Za-z ]{3,}$/.test(name)) {
-      setError("Name must have at least 3 letters and spaces only.");
-      return;
-    }
+    const newBuyer = { id: Date.now(), ...form, quantity: Number(form.quantity) };
+    setBuyers([...buyers, newBuyer]);
+    setStock({ ...stock, [form.crop]: stock[form.crop] - Number(form.quantity) });
+    
+    // activity log
+    const logs = readStorage("agri_activity", []);
+    logs.push({ id: Date.now(), user: "Admin", action: "ADD", entity: `Buyer ${form.name}`, time: new Date().toLocaleString() });
+    localStorage.setItem("agri_activity", JSON.stringify(logs));
 
-    if (cnic.length !== 13) {
-      setError("Enter a valid 13-digit CNIC.");
-      return;
-    }
+    setMessage("Buyer Saved Successfully!");
+    setForm({ name: "", cnic: "", crop: "Wheat", quantity: "", date: "", photo: "" });
+  };
 
-    if (buyers.some((buyer) => buyer.cnic === cnic)) {
-      setError("This CNIC is already registered.");
-      return;
-    }
-
-    if (!form.photo) {
-      setError("Please upload a JPG or PNG image.");
-      return;
-    }
-
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("Enter a valid quantity greater than zero.");
-      return;
-    }
-
-    if (quantity > (Number(stock[form.crop]) || 0)) {
-      setError(
-        `Only ${Number(stock[form.crop]) || 0} kg of ${form.crop} is available.`
-      );
-      return;
-    }
-
-    if (!form.date) {
-      setError("Please select a delivery date.");
-      return;
-    }
-
-    const newBuyer = {
-      id: Date.now(),
-      name,
-      cnic,
-      crop: form.crop,
-      quantity,
-      date: form.date,
-      photo: form.photo,
-    };
-
-    const updatedBuyers = [...buyers, newBuyer];
-
-    const updatedStock = {
-      ...stock,
-      [form.crop]: Number(stock[form.crop]) - quantity,
-    };
-
-    try {
-      localStorage.setItem(
-        "agrinovaOrders",
-        JSON.stringify(updatedBuyers)
-      );
-
-      localStorage.setItem(
-        "agrinovaStock",
-        JSON.stringify(updatedStock)
-      );
-    } catch {
-      setError("Could not save. Try using a smaller image.");
-      return;
-    }
-
-    setBuyers(updatedBuyers);
-    setStock(updatedStock);
-
-    window.dispatchEvent(new Event("agrinova-updated"));
-
-    setForm({
-      name: "",
-      cnic: "",
-      crop: "Wheat",
-      quantity: "",
-      date: "",
-      photo: "",
-    });
-
-    event.target.reset();
-    setMessage("Buyer saved successfully and stock updated.");
-  }
-
-  function deleteBuyer(id) {
-    const buyerToDelete = buyers.find((buyer) => buyer.id === id);
-
-    if (!buyerToDelete) return;
-
-    const updatedBuyers = buyers.filter((buyer) => buyer.id !== id);
-
-    const updatedStock = {
-      ...stock,
-      [buyerToDelete.crop]:
-        Number(stock[buyerToDelete.crop] || 0) +
-        Number(buyerToDelete.quantity),
-    };
-
-    try {
-      localStorage.setItem(
-        "agrinovaOrders",
-        JSON.stringify(updatedBuyers)
-      );
-
-      localStorage.setItem(
-        "agrinovaStock",
-        JSON.stringify(updatedStock)
-      );
-
-      setBuyers(updatedBuyers);
-      setStock(updatedStock);
-      setMessage("Buyer deleted and crop stock restored.");
-      setError("");
-
-      window.dispatchEvent(new Event("agrinova-updated"));
-    } catch {
-      setError("Could not update saved records.");
-    }
-  }
-
-  const filteredBuyers = buyers.filter(
-    (buyer) =>
-      buyer.name.toLowerCase().includes(search.toLowerCase()) ||
-      buyer.cnic.includes(search.replace(/\D/g, ""))
-  );
+  const filtered = buyers.filter(b => b.name.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <section className="content-card buyer-form-card">
-      <div className="section-heading">
+    <div style={{ background: 'white', padding: '20px', borderRadius: '12px' }}>
+      <h2><i className="fa-solid fa-user-plus"></i> Buyer Registration</h2>
+      <p style={{ color: '#666', fontSize: '14px', marginBottom: '15px' }}>Register buyers and manage crop orders</p>
+
+      <div style={{ background: '#f3f4f6', padding: '12px', borderRadius: '8px', marginBottom: '15px', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+        {Object.keys(stock).map(c => <span key={c}><strong>{c}</strong> {stock[c]} kg</span>)}
+      </div>
+
+      <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
         <div>
-          <h2>
-            <i className="fa-solid fa-user-plus"></i> Buyer Registration
-          </h2>
-          <p>Register buyers and manage crop orders</p>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Full Name</label>
+          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Enter buyer name" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ccc', marginTop: '4px' }} />
         </div>
-      </div>
-
-      <div className="available-stock">
-        {Object.entries(stock).map(([crop, amount]) => (
-          <div className="stock-chip" key={crop}>
-            <span>{crop}</span>
-            <strong>{amount} kg</strong>
-          </div>
-        ))}
-      </div>
-
-      <form className="buyer-form" onSubmit={handleSubmit}>
-        <label>
-          Full Name
-          <input
-            name="name"
-            value={form.name}
-            onChange={handleChange}
-            placeholder="Enter buyer name"
-            required
-          />
-        </label>
-
-        <label>
-          CNIC Number
-          <input
-            name="cnic"
-            value={form.cnic}
-            onChange={handleChange}
-            placeholder="12345-1234567-1"
-            inputMode="numeric"
-            required
-          />
-        </label>
-
-        <label>
-          Crop
-          <select name="crop" value={form.crop} onChange={handleChange}>
-            {Object.keys(stock).map((crop) => (
-              <option key={crop} value={crop}>
-                {crop}
-              </option>
-            ))}
+        <div>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Delivery Date</label>
+          <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ccc', marginTop: '4px' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>CNIC Number (12345-1234567-1)</label>
+          <input value={form.cnic} onChange={e => setForm({ ...form, cnic: e.target.value })} placeholder="12345-1234567-1" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ccc', marginTop: '4px' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>CNIC Photo (JPG/PNG, max 1 MB)</label>
+          <input type="file" accept=".jpg,.png" onChange={handlePhoto} style={{ width: '100%', padding: '7px', borderRadius: '8px', border: '1px solid #ccc', marginTop: '4px' }} />
+        </div>
+        <div>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Crop</label>
+          <select value={form.crop} onChange={e => setForm({ ...form, crop: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ccc', marginTop: '4px' }}>
+            <option>Wheat</option><option>Corn</option><option>Potato</option><option>Tomato</option>
           </select>
-        </label>
-
-        <label>
-          Quantity (kg)
-          <input
-            name="quantity"
-            type="number"
-            min="1"
-            max={stock[form.crop] || 0}
-            value={form.quantity}
-            onChange={handleChange}
-            placeholder={`Available: ${stock[form.crop] || 0} kg`}
-            required
-          />
-        </label>
-
-        <label>
-          Delivery Date
-          <input
-            name="date"
-            type="date"
-            value={form.date}
-            onChange={handleChange}
-            required
-          />
-        </label>
-
-        <label>
-          CNIC Photo (JPG/PNG, max 1 MB)
-          <input
-            type="file"
-            accept="image/jpeg,image/png"
-            onChange={handlePhoto}
-            required={!form.photo}
-          />
-        </label>
-
-        {form.photo && (
-          <div className="buyer-photo-preview">
-            <img src={form.photo} alt="Uploaded document preview" />
-            <button
-              type="button"
-              onClick={() =>
-                setForm((previous) => ({ ...previous, photo: "" }))
-              }
-            >
-              Remove Photo
-            </button>
-          </div>
-        )}
-
-        {error && <p className="form-error">{error}</p>}
-        {message && <p className="form-success">{message}</p>}
-
-        <button className="submit-order-btn" type="submit">
-          <i className="fa-solid fa-floppy-disk"></i> Save Buyer
-        </button>
+        </div>
+        <div>
+          <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Quantity (kg)</label>
+          <input type="number" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} placeholder={`Available ${stock[form.crop]} kg`} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ccc', marginTop: '4px' }} />
+        </div>
+        <div style={{ gridColumn: '1 / -1' }}>
+          {error && <p style={{ color: 'red', fontSize: '13px' }}><i className="fa-solid fa-circle-exclamation"></i> {error}</p>}
+          {message && <p style={{ color: 'green', fontSize: '13px' }}><i className="fa-solid fa-check"></i> {message}</p>}
+          <button type="submit" style={{ marginTop: '10px', padding: '12px 20px', background: '#0a3d2e', color: 'white', border: 'none', borderRadius: '8px' }}><i className="fa-solid fa-floppy-disk"></i> Save Buyer</button>
+        </div>
       </form>
 
-      <div className="buyer-table-section">
-        <div className="section-heading">
-          <div>
-            <h2>Registered Buyers</h2>
-            <p>{buyers.length} saved record(s)</p>
-          </div>
-        </div>
-
-        <input
-          className="buyer-search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search by buyer name or CNIC"
-        />
-
-        <div className="harvest-table-wrap">
-          <table className="harvest-table">
-            <thead>
-              <tr>
-                <th>Buyer</th>
-                <th>CNIC</th>
-                <th>Crop</th>
-                <th>Quantity</th>
-                <th>Date</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {filteredBuyers.map((buyer) => (
-                <tr key={buyer.id}>
-                  <td>{buyer.name}</td>
-                  <td>
-                    {buyer.cnic.replace(
-                      /^(\d{5})(\d{7})(\d)$/,
-                      "$1-$2-$3"
-                    )}
-                  </td>
-                  <td>{buyer.crop}</td>
-                  <td>{buyer.quantity} kg</td>
-                  <td>{buyer.date}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="delete-buyer-btn"
-                      onClick={() => deleteBuyer(buyer.id)}
-                    >
-                      <i className="fa-solid fa-trash"></i> Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-
-              {filteredBuyers.length === 0 && (
-                <tr>
-                  <td colSpan="6">No buyer records found.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+      <h3 style={{ marginTop: '25px' }}>Registered Buyers</h3>
+      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search buyer..." style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ccc', margin: '10px 0', width: '200px' }} />
+      {filtered.length === 0 ? <p style={{ color: '#888', fontSize: '13px' }}>No record(s) yet</p> : filtered.map(b => <div key={b.id} style={{ padding: '8px', borderBottom: '1px solid #eee', fontSize: '13px' }}>{b.name} - {b.crop} {b.quantity}kg - {b.cnic}</div>)}
+    </div>
   );
 }
 
